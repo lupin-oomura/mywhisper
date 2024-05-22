@@ -1,0 +1,5 @@
+pydub
+speechrecognition
+torch
+numpy
+pyaudio
