@@ -25,9 +25,11 @@ class mywhisper:
         self.microphone = sr.Microphone(sample_rate=16000)
         self.last_audio_time = time.time()
         self.silence_duration = silence_duration  # 無音検出のしきい値（秒）
+        self.threads = []
 
     def record_audio_callback(self, recognizer, audio):
         try:
+            self.last_audio_time = time.time()
             data = io.BytesIO(audio.get_wav_data())
             audio_clip = AudioSegment.from_file(data)
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -52,7 +54,10 @@ class mywhisper:
                 # 無音検出処理
                 if time.time() - self.last_audio_time > self.silence_duration:
                     print(f"No speech detected for {self.silence_duration} seconds, stopping...")
-                    self.stop_event.set()
+                    self.result_queue.put_nowait(f"system_msg:stop by silence in {self.silence_duration} sec.")
+                    self.stop_event.set() #self.stop()を使うと、自分自身が閉じられるような形になり、エラーがでる（stopのjoinの部分で）
+                    self.stop_listening(wait_for_stop=True)
+                    # self.stop()
                     break
 
                 audio_data = self.audio_queue.get(timeout=1)
@@ -64,8 +69,22 @@ class mywhisper:
                     os.remove(audio_data)
             except queue.Empty:
                 continue
+            except Exception as e:
+                print(f"Error in transcribe_forever: {e}")
+                break
 
     def start_transcribing(self):
-        threading.Thread(target=self.record_audio).start()
-        threading.Thread(target=self.transcribe_forever).start()
+        self.last_audio_time = time.time()
+
+        t1 = threading.Thread(target=self.record_audio)
+        t2 = threading.Thread(target=self.transcribe_forever)
+        self.threads.extend([t1, t2])
+        t1.start()
+        t2.start()
         return self.result_queue
+
+    def stop(self):
+        self.stop_event.set()
+        self.stop_listening(wait_for_stop=True)
+        for t in self.threads:
+            t.join()
