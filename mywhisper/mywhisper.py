@@ -88,3 +88,10 @@ class mywhisper:
         self.stop_listening(wait_for_stop=True)
         for t in self.threads:
             t.join()
+
+
+
+    def cleanup(self):
+        self.audio_queue.queue.clear()
+        self.result_queue.queue.clear()
+        self.threads = []

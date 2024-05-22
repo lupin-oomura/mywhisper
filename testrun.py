@@ -26,12 +26,14 @@ def main():
             if transcriber.stop_event.is_set() :
                 print("stopped by silence")
 
-
     except KeyboardInterrupt:
         transcriber.stop()
         print("Stopped by user")
 
 
+    transcriber.cleanup()
+
+    
 if __name__ == "__main__":
     main()
 
