@@ -5,9 +5,13 @@ import queue
 import tempfile
 import os
 import threading
+import time
 
 class mywhisper:
-    def __init__(self, my_openai, energy=300, pause=0.1, dynamic_energy=False, save_file=False):
+    def __init__(self, my_openai, energy=300, pause=0.1, silence_duration:float=10.0, dynamic_energy=False, save_file=False):
+        # energy: この値が大きいと、雑音の多いところでも無音判定される
+        # silence_duration: この値の秒数無音が続くと、自動で処理を止める
+
         self.my_openai = my_openai
         self.energy = energy
         self.pause = pause
@@ -19,6 +23,8 @@ class mywhisper:
         self.stop_event = threading.Event()
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone(sample_rate=16000)
+        self.last_audio_time = time.time()
+        self.silence_duration = silence_duration  # 無音検出のしきい値（秒）
 
     def record_audio_callback(self, recognizer, audio):
         try:
@@ -43,6 +49,12 @@ class mywhisper:
     def transcribe_forever(self):
         while not self.stop_event.is_set():
             try:
+                # 無音検出処理
+                if time.time() - self.last_audio_time > self.silence_duration:
+                    print(f"No speech detected for {self.silence_duration} seconds, stopping...")
+                    self.stop_event.set()
+                    break
+
                 audio_data = self.audio_queue.get(timeout=1)
                 audio_file = open(audio_data, "rb")
                 result = self.my_openai.transcribe_audio(audio_file)
