@@ -9,6 +9,7 @@ import time
 
 class mywhisper:
     f_processing_stt = False
+    predicted_text = ""
 
     def __init__(self, my_openai, energy=300, pause=0.1, rms=1500, silence_duration:float=10.0, dynamic_energy=False, save_file=False, f_debug:bool=False):
         # energy: この値が大きいと、雑音の多いところでも無音判定される
@@ -31,6 +32,7 @@ class mywhisper:
         self.is_listening       = False                 #リスン状態を示すフラグ
         self.rms_threshold      = rms                   #音声入力中かの判定に使う（マイクに話しているかどうかの閾値）
         self.f_debug            = f_debug
+        self.predicted_text     = ""
 
     #------------------------------------------------------------#
     #--- マイクの音声を拾う関数群 --------------------------------#
@@ -113,6 +115,7 @@ class mywhisper:
                 audio_file = open(audio_data, "rb")
                 result = self.my_openai.transcribe_audio(audio_file)
                 predicted_text = result.text
+                self.predicted_text += result.text
                 self.result_queue.put_nowait(predicted_text)
                 if self.save_file:
                     os.remove(audio_data)
@@ -155,6 +158,8 @@ class mywhisper:
         self.result_queue.queue.clear()
         self.threads = []
 
+    def get_predicted_text(self) :
+        return self.predicted_text
 
 
 
