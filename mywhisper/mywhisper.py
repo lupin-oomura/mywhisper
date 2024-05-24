@@ -139,7 +139,7 @@ class mywhisper:
         t2.start()
         return self.result_queue
 
-    def stop_stt(self):
+    def stop_stt(self) -> str:
         self.is_listening = False #音量チェックはすぐに止めてOK
 
         #STT処理中なら、待つ
@@ -152,6 +152,8 @@ class mywhisper:
         self.stop_listening(wait_for_stop=True)
         for t in self.threads:
             t.join()
+
+        return self.get_predicted_text()
 
     def cleanup(self):
         self.audio_queue.queue.clear()
