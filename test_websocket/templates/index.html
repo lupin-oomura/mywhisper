@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音声認識デモ</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</head>
+<body>
+    <button id="btn_recording_start" class="mybutton">音声入力開始</button>
+    <button id="btn_recording_stop" class="mybutton">音声入力停止</button>
+    <div id="recognized_text"></div>
+</body>
+</html>
