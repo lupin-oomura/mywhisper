@@ -47,6 +47,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     socket.on('recognized_text', function (data) {
         const recognizedTextDiv = document.getElementById('recognized_text');
-        recognizedTextDiv.innerHTML += '<p>' + data.text + '</p>';
+        recognizedTextDiv.innerHTML += '<p>' + data.sttresult + '</p>';
+    });
+    socket.on('endmessage', function (data) {
+        const recognizedTextDiv = document.getElementById('recognized_text');
+        recognizedTextDiv.innerHTML += '<p>' + data.msg + '</p>';
+        stopRecording();
     });
 });

@@ -26,28 +26,65 @@ class mywhisper :
     predicted_text = ""
     queue_result = None 
     is_processing_stt = False #stt処理中かどうか
-    stt_thread = None 
+    stt_thread = None #STTを回すスレッド（Threadingで動かす）
+    chk_thread = None #無音をチェックするスレッド。無音が続いたら強制的にSTTを止める（Threadingで動かす）
     f_debug    = False
+    f_running = False #スレッドが動いているかどうか
     mo         = None #myopenai
+    socketio   = None
+    socketevent = ""
+    socketroom = None
+    socketnamespace = None
+    len_silence_threshold = None #サイレンス無音判定の長さ（ポーズの長さはSSTに出す長さ、こちらは終了させる長さ）
+    len_pause_threshold   = None #ポーズ無音判定の長さ（ポーズ判定されたらSTTに出す）
 
-    def __init__(self, session_id, f_debug:bool=False) :
+    def __init__(self, session_id, f_debug:bool=False, len_silence_threshold:int=99000, pause_threshold:float=-40, len_pause_threshold:int=500, chunk_size_for_ispause:int=250 ) :
+
         self.session_id = session_id
-        self.ac = self.myaudiocontrol(f_debug=f_debug)
+        self.ac = self.myaudiocontrol(
+                f_debug                 = f_debug, 
+                pause_threshold         = pause_threshold, 
+                len_pause_threshold     = len_pause_threshold, 
+                chunk_size_for_ispause  = chunk_size_for_ispause
+        )
         self.stop_event = threading.Event()
         self.queue_result = queue.Queue()
         self.f_debug = f_debug #デバッグでプリントしまくりモード
         self.mo = myopenai.myopenai()
+        self.stt_thread = None
+        self.chk_thread = None
+        self.socketio = None
+        self.socketevent = ""
+        self.len_silence_threshold = len_silence_threshold
+        self.len_pause_threshold = len_pause_threshold
 
+    def set_socket_paramaters(self, socketio, event:str, room:str=None, namespace:str=None) :
+        self.socketio = socketio
+        self.socketevent = event
+        self.socketroom = room
+        self.socketnamespace = namespace
 
 
     def start_stt(self) :
+        if self.f_running == True :
+            print("すでに動いてます")
+            return
+        
+        self.__debugprint("STTスレッドスタート")
+        if self.stt_thread :
+            self.stt_thread.join() #多分不要だけど、念のため（複数回転回避）
+        if self.chk_thread :
+            self.chk_thread.join() #多分不要だけど、念のため（複数回転回避）
+
+        self.f_running = True
         self.stt_thread = threading.Thread(target=self.__run_speech_to_text)
+        self.chk_thread = threading.Thread(target=self.__check_muon)
         self.stt_thread.start()
+        self.chk_thread.start()
 
     def stop_stt(self) :
         self.stop_event.set()
-        if self.f_debug :
-            print(f"停止サイン送りました。")
+        self.__debugprint(f"停止サイン送りました。")
         self.stt_thread.join() #終わりを待つ
 
         #最後のひねり出し
@@ -55,19 +92,34 @@ class mywhisper :
             talk = self.ac.queue_talks.get()
             self.process_stt(talk)
 
-        if self.f_debug :
-            print(f"終了しました。")
+        self.__debugprint(f"終了しました。")
+        self.f_running = False
+
+    def is_running(self) :
+        return self.f_running
 
     def __run_speech_to_text(self):
         while not self.stop_event.is_set() : 
             try:
                 talk = self.ac.queue_talks.get(timeout=0.5)
+                self.process_stt(talk)
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"Error in run_speech_to_text: {e}")
                 break
-            self.process_stt(talk)
+
+    def __check_muon(self) :
+        while self.f_running == True and self.ac.is_silence(self.len_silence_threshold) == False :
+            time.sleep(self.len_pause_threshold / 1000)
+        self.__debugprint(f"無音が{self.len_silence_threshold}ミリ秒続いたので停止します")
+        self.stop_stt() #f_runningはstop_sttで降ろされる
+        
+
+    def __debugprint(self, msg) :
+        if self.f_debug :
+            print(msg)
+
 
     def process_stt(self, talk) :
         if self.f_debug :
@@ -97,6 +149,16 @@ class mywhisper :
         if self.f_debug :
             print(f"認識終了")
 
+        #ソケットが設定されていれば、そこにデータを送信する（キューは残す）
+        if self.socketio :
+            self.socketio.emit(
+                self.socketevent, 
+                {'sttresult': predicted_text}, 
+                room=self.socketroom, 
+                namespace=self.socketnamespace
+            )
+            self.socketio.sleep(0.1)
+
     def is_mugon(self, wav_data) :
         audio = AudioSegment.from_file(io.BytesIO(wav_data), format="wav")
         if self.ac.is_pause( audio, self.ac.pause_threshold, int(len(audio)*0.8) ) :
@@ -108,7 +170,6 @@ class mywhisper :
 
 
     class myaudiocontrol :
-        pause_threshold = None #ポーズ判定の閾値。要調整
 
         session_id = None 
         webm_audio_all = None 
@@ -116,12 +177,14 @@ class mywhisper :
         audio_talk = None #無音が続くまで追加される
         queue_talks = queue.Queue()  #文章単位（無音まで）で追加されるキュー
         current_index = None #webm_audio_allに対して、どこまでaudio化したかを保持（差分を得るため）
-        len_pause_threshold = None #ポーズ判定の長さ
-        chunk_size_for_ispause = None
         len_silence = 0 #無音がどれだけ続いているか
         f_debug = False
         last_audio_time = None #最後に音声が入った時間
         f_talked = False #１回でもトークキューに値が入ったら、立つ
+
+        pause_threshold = None #ポーズ判定の閾値。要調整
+        len_pause_threshold = None #ポーズ判定の長さ
+        chunk_size_for_ispause = None #ポーズ判定時のチャンクサイズ（ミリ秒）
 
         def __init__(self, pause_threshold:float=-40.0, len_pause_threshold:int=500, chunk_size_for_ispause:int=250, f_debug:bool=False) :
             self.current_index = 0
@@ -193,10 +256,11 @@ class mywhisper :
         def is_pause(self, audio, pause_threshold, len_pause_threshold)->bool:
             chunk_size = self.chunk_size_for_ispause
             chunks = [audio[i:i + chunk_size] for i in range(0, len(audio), chunk_size)]
-
+            l = []
             maxcount = count = 0 #無音ミリ秒数
             for chunk in chunks:
                 dBFS = chunk.dBFS
+                l.append(dBFS)
                 if dBFS > pause_threshold :
                     count = 0
                 else :
@@ -204,6 +268,8 @@ class mywhisper :
                     maxcount = max(maxcount, count)
 
             f_pause = True if maxcount*chunk_size >= len_pause_threshold else False
+            if self.f_debug == True :
+                print(f"pause={f_pause}, dBFS = {l}")
             return f_pause
 
         def is_silence(self, len_silence_threshold:int) :
