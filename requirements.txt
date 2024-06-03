@@ -2,4 +2,4 @@ pydub
 speechrecognition
 torch
 numpy
-pyaudio
+# pyaudio
